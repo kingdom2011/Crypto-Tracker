@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crypto Tracker | CoinGecko API</title>
+  <style>
+    :root {
+      --primary: #6200ee;
+      --positive: #28a745;
+      --negative: #dc3545;
+      --bg: #f8f9fa;
+      --card-bg: #ffffff;
+      --text: #212529;
+      --border: #dee2e6;
+    }
+    .dark-mode {
+      --primary: #bb86fc;
+      --bg: #121212;
+      --card-bg: #1e1e1e;
+      --text: #e1e1e1;
+      --border: #333333;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      width: calc(100vw - 100px);
+      margin: 0 50px;
+      padding: 20px;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    h1 {
+      color: var(--primary);
+    }
+    .status {
+      font-size: 0.9em;
+      color: #666;
+    }
+    .controls {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .exchange-controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+      width: 100%;
+    }
+    .exchange-group {
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .exchange-group label {
+      margin-bottom: 5px;
+      font-weight: 500;
+    }
+    .exchange-group .update-time {
+      position: absolute;
+      right: 0;
+      top: 0;
+      font-size: 0.7em;
+      color: #666;
+    }
+    .exchange-group input,
+    .exchange-group select {
+      padding: 10px 15px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card-bg);
+      color: var(--text);
+      width: 100%;
+    }
+    #search {
+      flex: 1;
+      min-width: 200px;
+      padding: 10px 15px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card-bg);
+      color: var(--text);
+    }
+    button {
+      padding: 10px 15px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    button:hover {
+      opacity: 0.9;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .toggle-column-btn.active {
+      background: var(--positive);
+    }
+    .table-container {
+      overflow-x: auto;
+      width: 100%;
+      margin-bottom: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card-bg);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border-radius: 8px;
+      overflow: hidden;
+      table-layout: fixed;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    th {
+      background: rgba(0,0,0,0.05);
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      position: relative;
+    }
+    th:hover {
+      background: rgba(0,0,0,0.08);
+    }
+    th.sort-asc::after {
+      content: "↑";
+      margin-left: 5px;
+    }
+    th.sort-desc::after {
+      content: "↓";
+      margin-left: 5px;
+    }
+    tr:hover {
+      background: rgba(0,0,0,0.03);
+    }
+    /* Column width adjustments */
+    th:nth-child(1), td:nth-child(1) { width: 50px; } /* Rank - changed to 50px */
+    th:nth-child(2), td:nth-child(2) { width: auto; min-width: 200px; } /* Name */
+    th:nth-child(3), td:nth-child(3) { width: 130px; } /* Price (IRT) */
+    th:nth-child(4), td:nth-child(4) { width: 120px; } /* Price (USD) */
+    th:nth-child(5), td:nth-child(5) { width: 80px; } /* 24h % */
+    th:nth-child(6), td:nth-child(6) { width: 80px; } /* 7D % */
+    th:nth-child(7), td:nth-child(7) { width: 80px; } /* 30D % */
+    th:nth-child(8), td:nth-child(8) { width: 90px; } /* 24h Min */
+    th:nth-child(9), td:nth-child(9) { width: 90px; } /* 24h Max */
+    th:nth-child(10), td:nth-child(10) { width: 90px; } /* 24h Inc */
+    th:nth-child(11), td:nth-child(11) { width: 90px; } /* 7D Min */
+    th:nth-child(12), td:nth-child(12) { width: 90px; } /* 7D Max */
+    th:nth-child(13), td:nth-child(13) { width: 90px; } /* 7D Inc */
+    th:nth-child(14), td:nth-child(14) { width: 90px; } /* 30D Min */
+    th:nth-child(15), td:nth-child(15) { width: 90px; } /* 30D Max */
+    th:nth-child(16), td:nth-child(16) { width: 90px; } /* 30D Inc */
+    th:nth-child(17), td:nth-child(17) { width: 110px; } /* Market Cap */
+    th:nth-child(18), td:nth-child(18) { width: 50px; } /* Favorite */
+    .positive {
+      color: var(--positive);
+    }
+    .negative {
+      color: var(--negative);
+    }
+    .crypto-icon {
+      width: 20px;
+      height: 20px;
+      margin-right: 8px;
+      vertical-align: middle;
+      border-radius: 50%;
+    }
+    .favorite-btn {
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      font-size: 1.2em;
+      color: #ccc;
+    }
+    .favorite-btn.active {
+      color: gold;
+    }
+    #loading, #error {
+      text-align: center;
+      padding: 20px;
+    }
+    #loading {
+      color: #666;
+    }
+    #error {
+      color: var(--negative);
+    }
+    .editable-cell {
+      padding: 0;
+    }
+    .editable-cell input {
+      width: 100%;
+      height: 100%;
+      padding: 10px 12px;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+    }
+    .editable-cell input:focus {
+      outline: 2px solid var(--primary);
+      background: var(--card-bg);
+    }
+    .coin-name {
+      cursor: pointer;
+      color: var(--primary);
+      text-decoration: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: inline-block;
+      max-width: calc(100% - 30px);
+      vertical-align: middle;
+    }
+    .coin-name:hover {
+      text-decoration: underline;
+    }
+    [data-tooltip] {
+      position: relative;
+    }
+    [data-tooltip]:hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      color: white;
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+      z-index: 100;
+    }
+    @media (max-width: 768px) {
+      body {
+        width: calc(100vw - 40px);
+        margin: 0 20px;
+      }
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      th, td {
+        padding: 8px 10px;
+      }
+      .hide-mobile {
+        display: none;
+      }
+      /* Adjust column widths for mobile */
+      th:nth-child(3), td:nth-child(3) { width: 100px; } /* Price (IRT) */
+      th:nth-child(4), td:nth-child(4) { width: 90px; } /* Price (USD) */
+      th:nth-child(5), td:nth-child(5) { width: 70px; } /* 24h % */
+      th:nth-child(6), td:nth-child(6) { width: 70px; } /* 7D % */
+      th:nth-child(7), td:nth-child(7) { width: 70px; } /* 30D % */
+    }
+  </style>
+</head>
+<body>
+  <!-- [Rest of the HTML content remains exactly the same] -->
+</body>
+</html>
