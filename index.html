@@ -242,7 +242,7 @@
     .coin-name:hover {
       text-decoration: underline;
     }
-    /* Fixed Tooltip styles */
+    /* Tooltip styles */
     .tooltip-container {
       position: relative;
       display: inline-block;
@@ -433,13 +433,13 @@
       sortDir: 'asc',
       showFavorites: true,
       lastUpdated: null,
-      exchangePrices: {
+      exchangePrices: JSON.parse(localStorage.getItem('cryptoExchangeRates')) || {
         nobitex: 84000,
         wallex: 84000,
         okexchange: 84000,
         ramzinex: 84000
       },
-      exchangeUpdateTimes: {
+      exchangeUpdateTimes: JSON.parse(localStorage.getItem('cryptoExchangeUpdateTimes')) || {
         nobitex: null,
         wallex: null,
         okexchange: null,
@@ -522,6 +522,258 @@
     }
 
     // ======================
+    // GitHub Storage (Fixed Implementation)
+    // ======================
+    async function saveToGitHub() {
+      if (!CONFIG.github.token) {
+        alert('Please set your GitHub token first');
+        initGitHubToken();
+        return;
+      }
+
+      const dataToSave = {
+        favorites: state.favorites,
+        exchangePrices: state.exchangePrices,
+        exchangeUpdateTimes: state.exchangeUpdateTimes,
+        dayRanges: state.dayRanges,
+        weekRanges: state.weekRanges,
+        monthRanges: state.monthRanges,
+        lastUpdated: new Date().toISOString()
+      };
+
+      try {
+        // 1. Try to get existing file SHA (required for updates)
+        let sha = null;
+        try {
+          const getUrl = `https://api.github.com/repos/${CONFIG.github.repo}/contents/${CONFIG.github.dataPath}`;
+          const fileInfo = await fetch(getUrl, {
+            headers: {
+              'Authorization': `token ${CONFIG.github.token}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
+          });
+          
+          if (fileInfo.ok) {
+            const fileData = await fileInfo.json();
+            sha = fileData.sha;
+          }
+        } catch (e) {
+          console.log('No existing file found, will create new one');
+        }
+
+        // 2. Push the update
+        const updateUrl = `https://api.github.com/repos/${CONFIG.github.repo}/contents/${CONFIG.github.dataPath}`;
+        const response = await fetch(updateUrl, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${CONFIG.github.token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: 'Update crypto data',
+            content: btoa(unescape(encodeURIComponent(JSON.stringify(dataToSave))),
+            sha: sha,
+            branch: CONFIG.github.branch
+          })
+        });
+
+        const responseData = await response.json();
+        
+        if (response.ok) {
+          alert('Data saved to GitHub successfully!');
+          console.log('GitHub save successful:', responseData);
+        } else {
+          throw new Error(responseData.message || 'Failed to save to GitHub');
+        }
+      } catch (error) {
+        console.error('GitHub save error:', error);
+        alert(`Error saving to GitHub: ${error.message}`);
+      }
+    }
+
+    async function loadFromGitHub() {
+      try {
+        // Try to load from GitHub
+        const url = `https://api.github.com/repos/${CONFIG.github.repo}/contents/${CONFIG.github.dataPath}?ref=${CONFIG.github.branch}`;
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `token ${CONFIG.github.token}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch data from GitHub');
+        }
+
+        const fileData = await response.json();
+        const content = JSON.parse(decodeURIComponent(escape(atob(fileData.content))));
+
+        // Restore state from GitHub data
+        state.favorites = content.favorites || [];
+        state.exchangePrices = content.exchangePrices || state.exchangePrices;
+        state.exchangeUpdateTimes = content.exchangeUpdateTimes || state.exchangeUpdateTimes;
+        state.dayRanges = content.dayRanges || {};
+        state.weekRanges = content.weekRanges || {};
+        state.monthRanges = content.monthRanges || {};
+
+        // Update UI elements
+        elements.nobitexInput.value = state.exchangePrices.nobitex;
+        elements.wallexInput.value = state.exchangePrices.wallex;
+        elements.okexchangeInput.value = state.exchangePrices.okexchange;
+        elements.ramzinexInput.value = state.exchangePrices.ramzinex;
+        
+        updateExchangeTimeDisplays();
+        renderTable();
+        
+        alert('Data loaded from GitHub successfully!');
+      } catch (error) {
+        console.error('GitHub load error:', error);
+        alert(`Error loading from GitHub: ${error.message}. Using local data instead.`);
+        
+        // Fall back to local storage if GitHub load fails
+        loadFromLocalStorage();
+      }
+    }
+
+    function loadFromLocalStorage() {
+      // This is called as a fallback if GitHub load fails
+      const savedDayRanges = localStorage.getItem('cryptoDayRanges');
+      const savedWeekRanges = localStorage.getItem('cryptoWeekRanges');
+      const savedMonthRanges = localStorage.getItem('cryptoMonthRanges');
+      
+      if (savedDayRanges) state.dayRanges = JSON.parse(savedDayRanges);
+      if (savedWeekRanges) state.weekRanges = JSON.parse(savedWeekRanges);
+      if (savedMonthRanges) state.monthRanges = JSON.parse(savedMonthRanges);
+      
+      renderTable();
+    }
+
+    function initGitHubToken() {
+      const token = prompt('Enter your GitHub Personal Access Token (repo scope required):');
+      if (token) {
+        localStorage.setItem('github_token', token);
+        CONFIG.github.token = token;
+      }
+    }
+
+    // ======================
+    // Data Loading (Fixed Stuck Loading Issue)
+    // ======================
+    async function loadData() {
+      try {
+        showLoadingState();
+        
+        // First try to load from GitHub if token exists
+        if (CONFIG.github.token) {
+          await loadFromGitHub();
+        } else {
+          // Fall back to CoinGecko API
+          await loadFromCoinGecko();
+        }
+      } catch (error) {
+        handleDataLoadError(error);
+      } finally {
+        hideLoadingState();
+      }
+    }
+
+    async function loadFromCoinGecko() {
+      const now = new Date();
+      if (state.lastUpdated && now - state.lastUpdated < 30000) {
+        console.log('Skipping refresh - in cooldown period');
+        return;
+      }
+
+      const response = await fetch(`${CONFIG.apiUrl}&price_change_percentage=7d,30d`);
+      
+      if (!response.ok) {
+        throw new Error(response.status === 429 
+          ? 'API rate limit exceeded - please wait' 
+          : `API error: ${response.status}`);
+      }
+      
+      let coins = await response.json();
+      coins = coins.filter(coin => !STABLE_COINS.includes(coin.id));
+      
+      state.allCoins = coins;
+      state.lastUpdated = new Date();
+      updateLastUpdated();
+      
+      filterCoins();
+      sortCoins();
+      renderTable();
+    }
+
+    function showLoadingState() {
+      elements.loadingRow.style.display = '';
+      elements.errorPara.textContent = '';
+      elements.refreshBtn.disabled = true;
+    }
+
+    function hideLoadingState() {
+      elements.loadingRow.style.display = 'none';
+      elements.refreshBtn.disabled = false;
+    }
+
+    function handleDataLoadError(error) {
+      console.error('Failed to load data:', error);
+      elements.errorPara.textContent = 
+        error.message.includes('rate limit') 
+          ? 'API rate limit exceeded. Please wait or refresh later.'
+          : 'Failed to load live data. Showing cached data if available.';
+      
+      if (state.allCoins.length > 0) {
+        filterCoins();
+        sortCoins();
+        renderTable();
+      } else {
+        // If no data at all, show error message
+        elements.tableBody.innerHTML = `
+          <tr>
+            <td colspan="18" style="text-align: center; color: var(--negative)">
+              Failed to load data. Please check your connection and try again.
+            </td>
+          </tr>
+        `;
+      }
+    }
+
+    // ======================
+    // Range Data Handling (Fixed Persistence)
+    // ======================
+    function handleRangeUpdate(timeframe, coinId, type, value) {
+      const numericValue = parseFloat(value.replace(/,/g, '')) || null;
+      const rangeKey = `${timeframe}Ranges`;
+      
+      if (!state[rangeKey][coinId]) {
+        state[rangeKey][coinId] = { min: null, max: null };
+      }
+      
+      state[rangeKey][coinId][type] = numericValue;
+      state[rangeKey][coinId][`${type}Updated`] = new Date().toISOString();
+      
+      // Save to localStorage
+      localStorage.setItem(`crypto${timeframe === '24h' ? 'Day' : timeframe === '7d' ? 'Week' : 'Month'}Ranges`, 
+        JSON.stringify(state[rangeKey]));
+      
+      // Also save to GitHub if token exists
+      if (CONFIG.github.token) {
+        saveToGitHub();
+      }
+      
+      // Update the input value with formatted number
+      const inputElement = event.target;
+      setTimeout(() => {
+        inputElement.value = numericValue ? formatNumberInput(numericValue.toString()) : '';
+      }, 0);
+      
+      // Re-render the table to update all values
+      renderTable();
+    }
+
+    // ======================
     // Tooltip Implementation (Fixed)
     // ======================
     function initTooltips() {
@@ -570,73 +822,7 @@
     }
 
     // ======================
-    // Range Data Handling (Fixed)
-    // ======================
-    function handleRangeUpdate(timeframe, coinId, type, value) {
-      const numericValue = parseFloat(value.replace(/,/g, '')) || null;
-      const rangeKey = `${timeframe}Ranges`;
-      
-      if (!state[rangeKey][coinId]) {
-        state[rangeKey][coinId] = { min: null, max: null };
-      }
-      
-      state[rangeKey][coinId][type] = numericValue;
-      state[rangeKey][coinId][`${type}Updated`] = new Date().toISOString();
-      
-      // Save to localStorage
-      localStorage.setItem(`crypto${timeframe === '24h' ? 'Day' : timeframe === '7d' ? 'Week' : 'Month'}Ranges`, 
-        JSON.stringify(state[rangeKey]));
-      
-      // Update the input value with formatted number
-      const inputElement = event.target;
-      setTimeout(() => {
-        inputElement.value = numericValue ? formatNumberInput(numericValue.toString()) : '';
-      }, 0);
-      
-      // Re-render the table to update all values
-      renderTable();
-    }
-
-    // ======================
-    // Data Loading & Processing
-    // ======================
-    async function loadData() {
-      try {
-        const now = new Date();
-        if (state.lastUpdated && now - state.lastUpdated < 30000) {
-          console.log('Skipping refresh - in cooldown period');
-          return;
-        }
-
-        showLoadingState();
-        
-        const response = await fetch(`${CONFIG.apiUrl}&price_change_percentage=7d,30d`);
-        
-        if (!response.ok) {
-          throw new Error(response.status === 429 
-            ? 'API rate limit exceeded - please wait' 
-            : `API error: ${response.status}`);
-        }
-        
-        let coins = await response.json();
-        coins = coins.filter(coin => !STABLE_COINS.includes(coin.id));
-        
-        state.allCoins = coins;
-        state.lastUpdated = new Date();
-        updateLastUpdated();
-        
-        filterCoins();
-        sortCoins();
-        renderTable();
-      } catch (error) {
-        handleDataLoadError(error);
-      } finally {
-        hideLoadingState();
-      }
-    }
-
-    // ======================
-    // UI Rendering (Updated with proper tooltips)
+    // UI Rendering
     // ======================
     function renderTable() {
       if (state.displayedCoins.length === 0) {
@@ -748,6 +934,180 @@
     }
 
     // ======================
+    // Exchange Rate Handling
+    // ======================
+    function updateExchangeTimeDisplays() {
+      elements.nobitexUpdateTime.textContent = state.exchangeUpdateTimes.nobitex ? 
+        formatDateTime(state.exchangeUpdateTimes.nobitex) : '';
+      elements.wallexUpdateTime.textContent = state.exchangeUpdateTimes.wallex ? 
+        formatDateTime(state.exchangeUpdateTimes.wallex) : '';
+      elements.okexchangeUpdateTime.textContent = state.exchangeUpdateTimes.okexchange ? 
+        formatDateTime(state.exchangeUpdateTimes.okexchange) : '';
+      elements.ramzinexUpdateTime.textContent = state.exchangeUpdateTimes.ramzinex ? 
+        formatDateTime(state.exchangeUpdateTimes.ramzinex) : '';
+    }
+
+    function saveExchangeData() {
+      localStorage.setItem('cryptoExchangeRates', JSON.stringify(state.exchangePrices));
+      localStorage.setItem('cryptoExchangeUpdateTimes', JSON.stringify(state.exchangeUpdateTimes));
+    }
+
+    function updateIRTValues() {
+      if (state.selectedExchange && state.exchangePrices[state.selectedExchange]) {
+        renderTable();
+      }
+    }
+
+    function calculateIRTPrice(usdPrice) {
+      if (!state.selectedExchange || !state.exchangePrices[state.selectedExchange]) {
+        return -1;
+      }
+      const exchangeRate = state.exchangePrices[state.selectedExchange];
+      const irtPrice = usdPrice * exchangeRate;
+      
+      if (irtPrice < 1 && irtPrice > 0) {
+        return irtPrice.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 8
+        });
+      }
+      
+      if (irtPrice >= 1000) {
+        return irtPrice.toLocaleString(undefined, {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0
+        });
+      }
+      
+      return irtPrice.toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: irtPrice < 1000 ? 2 : 0
+      });
+    }
+
+    // ======================
+    // Column Visibility
+    // ======================
+    function updateColumnVisibility() {
+      const columns = document.querySelectorAll('.time-column');
+      columns.forEach(col => {
+        const timeframe = col.getAttribute('data-timeframe');
+        if (
+          (timeframe === '24h' && !state.show24hColumns) ||
+          (timeframe === '7d' && !state.show7dColumns) ||
+          (timeframe === '30d' && !state.show30dColumns)
+        ) {
+          col.style.display = 'none';
+        } else {
+          col.style.display = '';
+        }
+      });
+    }
+
+    function toggleColumnVisibility(timeframe) {
+      switch(timeframe) {
+        case '24h':
+          state.show24hColumns = !state.show24hColumns;
+          localStorage.setItem('show24hColumns', state.show24hColumns);
+          elements.toggle24hBtn.classList.toggle('active', state.show24hColumns);
+          break;
+        case '7d':
+          state.show7dColumns = !state.show7dColumns;
+          localStorage.setItem('show7dColumns', state.show7dColumns);
+          elements.toggle7dBtn.classList.toggle('active', state.show7dColumns);
+          break;
+        case '30d':
+          state.show30dColumns = !state.show30dColumns;
+          localStorage.setItem('show30dColumns', state.show30dColumns);
+          elements.toggle30dBtn.classList.toggle('active', state.show30dColumns);
+          break;
+      }
+      updateColumnVisibility();
+    }
+
+    // ======================
+    // Favorites
+    // ======================
+    function toggleFavorite(coinId) {
+      const index = state.favorites.indexOf(coinId);
+      if (index === -1) {
+        state.favorites.push(coinId);
+      } else {
+        state.favorites.splice(index, 1);
+      }
+      localStorage.setItem('cryptoFavorites', JSON.stringify(state.favorites));
+      if (state.showFavorites) filterCoins();
+      renderTable();
+    }
+
+    // ======================
+    // Filtering & Sorting
+    // ======================
+    function filterCoins() {
+      const searchTerm = elements.searchInput.value.toLowerCase();
+      state.displayedCoins = state.allCoins.filter(coin => {
+        const matchesSearch = 
+          coin.name.toLowerCase().includes(searchTerm) || 
+          coin.symbol.toLowerCase().includes(searchTerm);
+        const isFavorite = state.favorites.includes(coin.id);
+        return state.showFavorites ? matchesSearch && isFavorite : matchesSearch;
+      });
+    }
+
+    function sortCoins() {
+      state.displayedCoins.sort((a, b) => {
+        let valA, valB;
+        
+        switch (state.sortBy) {
+          case 'rank': valA = a.market_cap_rank; valB = b.market_cap_rank; break;
+          case 'name': valA = a.name; valB = b.name; break;
+          case 'price': valA = a.current_price; valB = b.current_price; break;
+          case 'price_irt': 
+            valA = parseFloat(calculateIRTPrice(a.current_price).replace(/,/g, '')) || 0;
+            valB = parseFloat(calculateIRTPrice(b.current_price).replace(/,/g, '')) || 0;
+            break;
+          case 'change': valA = a.price_change_percentage_24h; valB = b.price_change_percentage_24h; break;
+          case 'change_7d': valA = a.price_change_percentage_7d_in_currency; valB = b.price_change_percentage_7d_in_currency; break;
+          case 'change_30d': valA = a.price_change_percentage_30d_in_currency; valB = b.price_change_percentage_30d_in_currency; break;
+          case 'market_cap': valA = a.market_cap; valB = b.market_cap; break;
+          default: valA = a.market_cap_rank; valB = b.market_cap_rank;
+        }
+        
+        return typeof valA === 'string' 
+          ? state.sortDir === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA)
+          : state.sortDir === 'asc' ? valA - valB : valB - valA;
+      });
+    }
+
+    function updateSortIndicators() {
+      document.querySelectorAll('th[data-sort]').forEach(th => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (th.getAttribute('data-sort') === state.sortBy) {
+          th.classList.add(`sort-${state.sortDir}`);
+        }
+      });
+    }
+
+    // ======================
+    // Theme Functions
+    // ======================
+    function updateTheme() {
+      if (state.darkMode) {
+        document.body.classList.add('dark-mode');
+        elements.themeToggle.textContent = '☀️ Light Mode';
+      } else {
+        document.body.classList.remove('dark-mode');
+        elements.themeToggle.textContent = '🌙 Dark Mode';
+      }
+    }
+
+    function toggleTheme() {
+      state.darkMode = !state.darkMode;
+      localStorage.setItem('darkMode', state.darkMode);
+      updateTheme();
+    }
+
+    // ======================
     // Utility Functions
     // ======================
     function calculateIncrease(min, max) {
@@ -803,6 +1163,109 @@
       if (state.lastUpdated) {
         elements.lastUpdatedSpan.textContent = state.lastUpdated.toLocaleTimeString();
       }
+    }
+
+    function startAutoRefresh() {
+      setInterval(() => {
+        loadData();
+      }, CONFIG.refreshInterval);
+    }
+
+    // ======================
+    // Event Listeners
+    // ======================
+    function setupEventListeners() {
+      // Theme toggle
+      elements.themeToggle.addEventListener('click', toggleTheme);
+      
+      // Column visibility toggles
+      elements.toggle24hBtn.addEventListener('click', () => toggleColumnVisibility('24h'));
+      elements.toggle7dBtn.addEventListener('click', () => toggleColumnVisibility('7d'));
+      elements.toggle30dBtn.addEventListener('click', () => toggleColumnVisibility('30d'));
+      
+      // Search input
+      elements.searchInput.addEventListener('input', () => {
+        filterCoins();
+        renderTable();
+      });
+      
+      // Refresh button
+      elements.refreshBtn.addEventListener('click', () => {
+        const now = new Date();
+        if (state.lastUpdated && now - state.lastUpdated < 30000) {
+          alert('Please wait at least 30 seconds between refreshes');
+          return;
+        }
+        loadData();
+      });
+      
+      // Favorites toggle
+      elements.toggleFavoritesBtn.addEventListener('click', () => {
+        state.showFavorites = !state.showFavorites;
+        elements.toggleFavoritesBtn.textContent = 
+          state.showFavorites ? '👀 Show All' : '⭐ Show Favorites';
+        filterCoins();
+        renderTable();
+      });
+      
+      // Table sorting
+      document.querySelectorAll('th[data-sort]').forEach(th => {
+        th.addEventListener('click', () => {
+          const sortKey = th.getAttribute('data-sort');
+          if (state.sortBy === sortKey) {
+            state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+          } else {
+            state.sortBy = sortKey;
+            state.sortDir = 'asc';
+          }
+          sortCoins();
+          renderTable();
+          updateSortIndicators();
+        });
+      });
+      
+      // Exchange rate inputs
+      elements.nobitexInput.addEventListener('input', (e) => {
+        state.exchangePrices.nobitex = parseFloat(e.target.value) || 0;
+        state.exchangeUpdateTimes.nobitex = new Date();
+        updateExchangeTimeDisplays();
+        updateIRTValues();
+        saveExchangeData();
+      });
+      
+      elements.wallexInput.addEventListener('input', (e) => {
+        state.exchangePrices.wallex = parseFloat(e.target.value) || 0;
+        state.exchangeUpdateTimes.wallex = new Date();
+        updateExchangeTimeDisplays();
+        updateIRTValues();
+        saveExchangeData();
+      });
+      
+      elements.okexchangeInput.addEventListener('input', (e) => {
+        state.exchangePrices.okexchange = parseFloat(e.target.value) || 0;
+        state.exchangeUpdateTimes.okexchange = new Date();
+        updateExchangeTimeDisplays();
+        updateIRTValues();
+        saveExchangeData();
+      });
+      
+      elements.ramzinexInput.addEventListener('input', (e) => {
+        state.exchangePrices.ramzinex = parseFloat(e.target.value) || 0;
+        state.exchangeUpdateTimes.ramzinex = new Date();
+        updateExchangeTimeDisplays();
+        updateIRTValues();
+        saveExchangeData();
+      });
+      
+      // Exchange select
+      elements.exchangeSelect.addEventListener('change', (e) => {
+        state.selectedExchange = e.target.value || null;
+        updateIRTValues();
+      });
+      
+      // GitHub buttons
+      document.getElementById('save-to-github').addEventListener('click', saveToGitHub);
+      document.getElementById('load-from-github').addEventListener('click', loadFromGitHub);
     }
 
     // ======================
