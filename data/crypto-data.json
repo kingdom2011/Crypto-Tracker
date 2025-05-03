@@ -1,1 +1,1 @@
-{}
+{"favorites":["bitcoin","ethereum","ripple"],"exchangePrices":{"nobitex":84000,"wallex":84000,"okexchange":84000,"ramzinex":84000},"dayRanges":{"bitcoin":{"min":95000,"max":96000,"minUpdated":"2025-05-03T17:37:55.355Z","maxUpdated":"2025-05-03T17:38:00.070Z"}},"weekRanges":{"bitcoin":{"min":95000,"max":98000,"minUpdated":"2025-05-03T17:38:10.359Z","maxUpdated":"2025-05-03T17:38:14.420Z"}},"monthRanges":{"bitcoin":{"min":93000,"max":98000,"minUpdated":"2025-05-03T17:38:18.570Z","maxUpdated":"2025-05-03T17:38:22.039Z"}},"lastUpdated":"2025-05-03T17:38:25.839Z"}
